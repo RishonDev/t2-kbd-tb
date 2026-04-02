@@ -1,5 +1,7 @@
 *
 !.gitignore
+!README.md
+!Makefile
 !hid-apple.c
 !hid-appletb-bl.c
 !hid-appletb-kbd.c

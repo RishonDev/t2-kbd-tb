@@ -114,6 +114,15 @@ struct apple_magic_backlight {
 	u16 saved_brightness;
 };
 
+static u16 apple_saved_kbd_backlight_brightness;
+
+static u16 apple_initial_kbd_backlight_brightness(u16 max_brightness)
+{
+	if (apple_saved_kbd_backlight_brightness)
+		return apple_saved_kbd_backlight_brightness;
+	return max_t(u16, max_brightness / 2, 1);
+}
+
 struct apple_sc {
 	struct hid_device *hdev;
 	unsigned long quirks;
@@ -123,6 +132,7 @@ struct apple_sc {
 	struct timer_list battery_timer;
 	struct apple_sc_backlight *backlight;
 	struct apple_magic_backlight *magic_backlight;
+	bool suspend_preparing_remove;
 };
 
 struct apple_key_translation {
@@ -833,8 +843,10 @@ static int apple_backlight_led_set(struct led_classdev *led_cdev,
 	int ret;
 
 	ret = apple_backlight_set(backlight->hdev, brightness, 0);
-	if (!ret)
+	if (!ret) {
 		backlight->current_brightness = brightness;
+		apple_saved_kbd_backlight_brightness = brightness;
+	}
 	return ret;
 }
 
@@ -878,12 +890,19 @@ static int apple_backlight_init(struct hid_device *hdev)
 	asc->backlight->cdev.brightness_set_blocking = apple_backlight_led_set;
 	asc->backlight->current_brightness = 0;
 	asc->backlight->saved_brightness = 0;
+	asc->backlight->cdev.brightness = 0;
 
-	ret = apple_backlight_set(hdev, 0, 0);
+	asc->backlight->cdev.brightness =
+		apple_initial_kbd_backlight_brightness(rep->backlight_on_max);
+
+	ret = apple_backlight_set(hdev, asc->backlight->cdev.brightness, 0);
 	if (ret < 0) {
 		hid_err(hdev, "backlight set request failed: %d\n", ret);
 		goto cleanup_and_exit;
 	}
+	asc->backlight->current_brightness = asc->backlight->cdev.brightness;
+	asc->backlight->saved_brightness = asc->backlight->current_brightness;
+	apple_saved_kbd_backlight_brightness = asc->backlight->current_brightness;
 
 	ret = devm_led_classdev_register(&hdev->dev, &asc->backlight->cdev);
 
@@ -917,6 +936,7 @@ static int apple_magic_backlight_led_set(struct led_classdev *led_cdev,
 
 	apple_magic_backlight_set(backlight, brightness, 1);
 	backlight->current_brightness = brightness;
+	apple_saved_kbd_backlight_brightness = brightness;
 	return 0;
 }
 
@@ -950,9 +970,16 @@ static int apple_magic_backlight_init(struct hid_device *hdev)
 	backlight->cdev.brightness_set_blocking = apple_magic_backlight_led_set;
 	backlight->current_brightness = 0;
 	backlight->saved_brightness = 0;
+	backlight->cdev.brightness = 0;
 	asc->magic_backlight = backlight;
 
-	apple_magic_backlight_set(backlight, 0, 0);
+	backlight->cdev.brightness =
+		apple_initial_kbd_backlight_brightness(backlight->cdev.max_brightness);
+	backlight->current_brightness = backlight->cdev.brightness;
+	backlight->saved_brightness = backlight->current_brightness;
+	apple_saved_kbd_backlight_brightness = backlight->current_brightness;
+
+	apple_magic_backlight_set(backlight, backlight->current_brightness, 0);
 
 	return devm_led_classdev_register(&hdev->dev, &backlight->cdev);
 
@@ -1028,6 +1055,21 @@ static void apple_remove(struct hid_device *hdev)
 	if (asc->quirks & APPLE_RDESC_BATTERY)
 		timer_delete_sync(&asc->battery_timer);
 
+	/* Only do aggressive LED teardown on suspend-driven remove. */
+	if (asc->suspend_preparing_remove && asc->backlight) {
+		hid_info(hdev, "remove unregistering keyboard backlight LED %s\n",
+			 asc->backlight->cdev.name);
+		devm_led_classdev_unregister(&hdev->dev, &asc->backlight->cdev);
+		asc->backlight = NULL;
+	}
+
+	if (asc->suspend_preparing_remove && asc->magic_backlight) {
+		hid_info(hdev, "remove unregistering magic keyboard backlight LED %s\n",
+			 asc->magic_backlight->cdev.name);
+		devm_led_classdev_unregister(&hdev->dev, &asc->magic_backlight->cdev);
+		asc->magic_backlight = NULL;
+	}
+
 	hid_hw_stop(hdev);
 }
 
@@ -1036,14 +1078,19 @@ static int apple_suspend(struct hid_device *hdev, pm_message_t msg)
 {
 	struct apple_sc *asc = hid_get_drvdata(hdev);
 
+	/* Marker/cache only; active reinit happens through fresh probe. */
+	asc->suspend_preparing_remove = true;
+
 	if (asc->backlight) {
 		asc->backlight->saved_brightness = asc->backlight->current_brightness;
+		apple_saved_kbd_backlight_brightness = asc->backlight->current_brightness;
 		apple_backlight_set(hdev, 0, 0);
 		asc->backlight->current_brightness = 0;
 	}
 
 	if (asc->magic_backlight) {
 		asc->magic_backlight->saved_brightness = asc->magic_backlight->current_brightness;
+		apple_saved_kbd_backlight_brightness = asc->magic_backlight->current_brightness;
 		apple_magic_backlight_set(asc->magic_backlight, 0, 0);
 		asc->magic_backlight->current_brightness = 0;
 	}
@@ -1055,6 +1102,9 @@ static int apple_resume(struct hid_device *hdev)
 {
 	struct apple_sc *asc = hid_get_drvdata(hdev);
 	int ret = 0;
+
+	/* Clear suspend marker; active reinit happens through fresh probe. */
+	asc->suspend_preparing_remove = false;
 
 	if (asc->backlight && asc->backlight->saved_brightness) {
 		ret = apple_backlight_set(hdev, asc->backlight->saved_brightness, 0);

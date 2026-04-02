@@ -36,6 +36,7 @@ struct appletb_bl {
 	struct backlight_device *bdev;
 
 	bool full_on;
+	bool suspend_preparing_remove;
 };
 
 static const u8 appletb_bl_brightness_map[] = {
@@ -44,11 +45,23 @@ static const u8 appletb_bl_brightness_map[] = {
 	APPLETB_BL_ON,
 };
 
+static int appletb_bl_default_brightness_index(void)
+{
+	if (appletb_bl_def_brightness < 0)
+		return 0;
+	if (appletb_bl_def_brightness >= ARRAY_SIZE(appletb_bl_brightness_map))
+		return ARRAY_SIZE(appletb_bl_brightness_map) - 1;
+	return appletb_bl_def_brightness;
+}
+
 static int appletb_bl_set_brightness(struct appletb_bl *bl, u8 brightness)
 {
 	struct hid_report *report = bl->brightness_field->report;
 	struct hid_device *hdev = report->device;
 	int ret;
+
+	hid_info(hdev, "set_brightness request=%u full_on=%d\n",
+		 brightness, bl->full_on);
 
 	ret = hid_set_field(bl->aux1_field, 0, 1);
 	if (ret) {
@@ -79,6 +92,9 @@ static int appletb_bl_set_brightness(struct appletb_bl *bl, u8 brightness)
 		bl->full_on = false;
 	}
 
+	hid_info(hdev, "set_brightness applied=%u full_on=%d\n",
+		 brightness, bl->full_on);
+
 	return 0;
 }
 
@@ -91,6 +107,10 @@ static int appletb_bl_update_status(struct backlight_device *bdev)
 		brightness = APPLETB_BL_OFF;
 	else
 		brightness = appletb_bl_brightness_map[backlight_get_brightness(bdev)];
+
+	hid_info(bl->brightness_field->report->device,
+		 "update_status user_brightness=%u mapped=%u blank=%d\n",
+		 backlight_get_brightness(bdev), brightness, backlight_is_blank(bdev));
 
 	return appletb_bl_set_brightness(bl, brightness);
 }
@@ -118,8 +138,11 @@ static int appletb_bl_probe(struct hid_device *hdev, const struct hid_device_id 
 	brightness_field = hid_find_field(hdev, HID_FEATURE_REPORT,
 					  HID_VD_APPLE_TB_BRIGHTNESS, HID_USAGE_BRIGHTNESS);
 
-	if (!aux1_field || !brightness_field)
+	if (!aux1_field || !brightness_field) {
+		hid_info(hdev, "probe missing brightness fields aux1=%p brightness=%p\n",
+			 aux1_field, brightness_field);
 		return -ENODEV;
+	}
 
 	if (aux1_field->report != brightness_field->report)
 		return dev_err_probe(dev, -ENODEV, "Encountered unexpected report structure\n");
@@ -142,7 +165,7 @@ static int appletb_bl_probe(struct hid_device *hdev, const struct hid_device_id 
 	bl->brightness_field = brightness_field;
 
 	ret = appletb_bl_set_brightness(bl,
-		appletb_bl_brightness_map[(appletb_bl_def_brightness > 2) ? 2 : appletb_bl_def_brightness]);
+		appletb_bl_brightness_map[appletb_bl_default_brightness_index()]);
 
 	if (ret) {
 		dev_err_probe(dev, ret, "Failed to set default touch bar brightness to %d\n",
@@ -162,6 +185,8 @@ static int appletb_bl_probe(struct hid_device *hdev, const struct hid_device_id 
 	}
 
 	hid_set_drvdata(hdev, bl);
+	hid_info(hdev, "probe complete default_brightness=%d\n",
+		 appletb_bl_default_brightness_index());
 
 	return 0;
 
@@ -177,10 +202,46 @@ static void appletb_bl_remove(struct hid_device *hdev)
 {
 	struct appletb_bl *bl = hid_get_drvdata(hdev);
 
-	appletb_bl_set_brightness(bl, APPLETB_BL_OFF);
+	hid_info(hdev, "remove suspend_preparing_remove=%d\n",
+		 bl ? bl->suspend_preparing_remove : 0);
+
+	/* Only do aggressive backlight teardown on suspend-driven remove. */
+	if (bl && bl->suspend_preparing_remove) {
+		hid_info(hdev, "remove turning backlight off\n");
+		appletb_bl_set_brightness(bl, APPLETB_BL_OFF);
+	}
+
+	if (bl && bl->suspend_preparing_remove && bl->bdev) {
+		hid_info(hdev, "remove unregistering backlight device %s\n",
+			 dev_name(&bl->bdev->dev));
+		devm_backlight_device_unregister(&hdev->dev, bl->bdev);
+		bl->bdev = NULL;
+	}
 
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
+}
+
+static int appletb_bl_suspend(struct hid_device *hdev, pm_message_t msg)
+{
+	struct appletb_bl *bl = hid_get_drvdata(hdev);
+
+	/* Marker only; active reinit happens through fresh probe. */
+	if (bl)
+		bl->suspend_preparing_remove = true;
+
+	return 0;
+}
+
+static int appletb_bl_resume(struct hid_device *hdev)
+{
+	struct appletb_bl *bl = hid_get_drvdata(hdev);
+
+	/* Clear suspend marker; active reinit happens through fresh probe. */
+	if (bl)
+		bl->suspend_preparing_remove = false;
+
+	return 0;
 }
 
 static const struct hid_device_id appletb_bl_hid_ids[] = {
@@ -195,6 +256,9 @@ static struct hid_driver appletb_bl_hid_driver = {
 	.id_table = appletb_bl_hid_ids,
 	.probe = appletb_bl_probe,
 	.remove = appletb_bl_remove,
+	.suspend = pm_ptr(appletb_bl_suspend),
+	.resume = pm_ptr(appletb_bl_resume),
+	.reset_resume = pm_ptr(appletb_bl_resume),
 };
 module_hid_driver(appletb_bl_hid_driver);
 
