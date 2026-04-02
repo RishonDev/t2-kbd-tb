@@ -8,6 +8,8 @@ This tree carries the matching T2 Touch Bar and keyboard-backlight driver change
 
 ## Required repositories
 
+This fork is part of a set of fixes that make suspend/resume work on T2 Macs. Deploying the other fixes is mandatory to make it work.
+
 - `apple-bce`: `https://github.com/deqrocks/apple-bce`
 - `t2-upower`: `https://github.com/deqrocks/t2-upower`
 
