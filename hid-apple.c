@@ -1055,17 +1055,13 @@ static void apple_remove(struct hid_device *hdev)
 	if (asc->quirks & APPLE_RDESC_BATTERY)
 		timer_delete_sync(&asc->battery_timer);
 
-	/* Only do aggressive LED teardown on suspend-driven remove. */
+	/* Only tear down LEDs on suspend-driven remove. */
 	if (asc->suspend_preparing_remove && asc->backlight) {
-		hid_info(hdev, "remove unregistering keyboard backlight LED %s\n",
-			 asc->backlight->cdev.name);
 		devm_led_classdev_unregister(&hdev->dev, &asc->backlight->cdev);
 		asc->backlight = NULL;
 	}
 
 	if (asc->suspend_preparing_remove && asc->magic_backlight) {
-		hid_info(hdev, "remove unregistering magic keyboard backlight LED %s\n",
-			 asc->magic_backlight->cdev.name);
 		devm_led_classdev_unregister(&hdev->dev, &asc->magic_backlight->cdev);
 		asc->magic_backlight = NULL;
 	}
@@ -1078,7 +1074,6 @@ static int apple_suspend(struct hid_device *hdev, pm_message_t msg)
 {
 	struct apple_sc *asc = hid_get_drvdata(hdev);
 
-	/* Marker/cache only; active reinit happens through fresh probe. */
 	asc->suspend_preparing_remove = true;
 
 	if (asc->backlight) {
@@ -1103,7 +1098,6 @@ static int apple_resume(struct hid_device *hdev)
 	struct apple_sc *asc = hid_get_drvdata(hdev);
 	int ret = 0;
 
-	/* Clear suspend marker; active reinit happens through fresh probe. */
 	asc->suspend_preparing_remove = false;
 
 	if (asc->backlight && asc->backlight->saved_brightness) {

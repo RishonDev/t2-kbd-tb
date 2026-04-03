@@ -60,9 +60,6 @@ static int appletb_bl_set_brightness(struct appletb_bl *bl, u8 brightness)
 	struct hid_device *hdev = report->device;
 	int ret;
 
-	hid_info(hdev, "set_brightness request=%u full_on=%d\n",
-		 brightness, bl->full_on);
-
 	ret = hid_set_field(bl->aux1_field, 0, 1);
 	if (ret) {
 		hid_err(hdev, "Failed to set auxiliary field (%pe)\n", ERR_PTR(ret));
@@ -92,9 +89,6 @@ static int appletb_bl_set_brightness(struct appletb_bl *bl, u8 brightness)
 		bl->full_on = false;
 	}
 
-	hid_info(hdev, "set_brightness applied=%u full_on=%d\n",
-		 brightness, bl->full_on);
-
 	return 0;
 }
 
@@ -107,10 +101,6 @@ static int appletb_bl_update_status(struct backlight_device *bdev)
 		brightness = APPLETB_BL_OFF;
 	else
 		brightness = appletb_bl_brightness_map[backlight_get_brightness(bdev)];
-
-	hid_info(bl->brightness_field->report->device,
-		 "update_status user_brightness=%u mapped=%u blank=%d\n",
-		 backlight_get_brightness(bdev), brightness, backlight_is_blank(bdev));
 
 	return appletb_bl_set_brightness(bl, brightness);
 }
@@ -139,8 +129,6 @@ static int appletb_bl_probe(struct hid_device *hdev, const struct hid_device_id 
 					  HID_VD_APPLE_TB_BRIGHTNESS, HID_USAGE_BRIGHTNESS);
 
 	if (!aux1_field || !brightness_field) {
-		hid_info(hdev, "probe missing brightness fields aux1=%p brightness=%p\n",
-			 aux1_field, brightness_field);
 		return -ENODEV;
 	}
 
@@ -185,8 +173,6 @@ static int appletb_bl_probe(struct hid_device *hdev, const struct hid_device_id 
 	}
 
 	hid_set_drvdata(hdev, bl);
-	hid_info(hdev, "probe complete default_brightness=%d\n",
-		 appletb_bl_default_brightness_index());
 
 	return 0;
 
@@ -202,18 +188,12 @@ static void appletb_bl_remove(struct hid_device *hdev)
 {
 	struct appletb_bl *bl = hid_get_drvdata(hdev);
 
-	hid_info(hdev, "remove suspend_preparing_remove=%d\n",
-		 bl ? bl->suspend_preparing_remove : 0);
-
-	/* Only do aggressive backlight teardown on suspend-driven remove. */
+	/* Only tear down the backlight on suspend-driven remove. */
 	if (bl && bl->suspend_preparing_remove) {
-		hid_info(hdev, "remove turning backlight off\n");
 		appletb_bl_set_brightness(bl, APPLETB_BL_OFF);
 	}
 
 	if (bl && bl->suspend_preparing_remove && bl->bdev) {
-		hid_info(hdev, "remove unregistering backlight device %s\n",
-			 dev_name(&bl->bdev->dev));
 		devm_backlight_device_unregister(&hdev->dev, bl->bdev);
 		bl->bdev = NULL;
 	}
@@ -226,7 +206,6 @@ static int appletb_bl_suspend(struct hid_device *hdev, pm_message_t msg)
 {
 	struct appletb_bl *bl = hid_get_drvdata(hdev);
 
-	/* Marker only; active reinit happens through fresh probe. */
 	if (bl)
 		bl->suspend_preparing_remove = true;
 
@@ -237,7 +216,6 @@ static int appletb_bl_resume(struct hid_device *hdev)
 {
 	struct appletb_bl *bl = hid_get_drvdata(hdev);
 
-	/* Clear suspend marker; active reinit happens through fresh probe. */
 	if (bl)
 		bl->suspend_preparing_remove = false;
 

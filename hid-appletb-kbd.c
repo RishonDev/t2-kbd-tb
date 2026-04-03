@@ -107,28 +107,17 @@ static int appletb_kbd_set_mode(struct appletb_kbd *kbd, u8 mode)
 	struct hid_device *hdev = report->device;
 	int ret;
 
-	hid_info(hdev, "set_mode request current=%u target=%u\n",
-		 kbd->current_mode, mode);
-
 	if (kbd->suspend_preparing_remove && mode != APPLETB_KBD_MODE_OFF) {
-		hid_info(hdev,
-			 "set_mode blocked during suspend teardown current=%u target=%u\n",
-			 kbd->current_mode, mode);
 		return -EBUSY;
 	}
 
 	if (kbd->current_mode == mode) {
-		hid_info(hdev, "set_mode skipping duplicate target=%u\n", mode);
 		return 0;
 	}
 
 	if (kbd->last_mode_jiffies &&
 	    time_before(jiffies, kbd->last_mode_jiffies +
 				msecs_to_jiffies(APPLETB_MODE_SUBMIT_INTERVAL_MS))) {
-		hid_info(hdev,
-			 "set_mode throttled current=%u target=%u delta_jiffies=%lu\n",
-			 kbd->current_mode, mode,
-			 jiffies - kbd->last_mode_jiffies);
 		return -EAGAIN;
 	}
 
@@ -147,8 +136,6 @@ static int appletb_kbd_set_mode(struct appletb_kbd *kbd, u8 mode)
 	hid_hw_request(hdev, report, HID_REQ_SET_REPORT);
 	kbd->current_mode = mode;
 	kbd->last_mode_jiffies = jiffies;
-	hid_info(hdev, "set_mode submitted target=%u tracking_current=%u\n",
-		 mode, kbd->current_mode);
 
 power_normal:
 	hid_hw_power(hdev, PM_HINT_NORMAL);
@@ -159,10 +146,6 @@ power_normal:
 static void appletb_kbd_teardown(struct hid_device *hdev, struct appletb_kbd *kbd,
 				 bool send_mode_off)
 {
-	/* Shared remove-time teardown for the current reprobe-based lifecycle. */
-	hid_info(hdev, "teardown send_mode_off=%d saved_mode=%u current_mode=%u\n",
-		 send_mode_off, kbd->saved_mode, kbd->current_mode);
-
 	if (send_mode_off)
 		appletb_kbd_set_mode(kbd, APPLETB_KBD_MODE_OFF);
 
@@ -490,8 +473,6 @@ static int appletb_kbd_probe(struct hid_device *hdev, const struct hid_device_id
 				    "Backlight device not ready, deferring probe\n");
 		goto close_hw;
 	} else {
-		hid_info(hdev, "probe found backlight device %s\n",
-			 dev_name(&kbd->backlight_dev->dev));
 		backlight_device_set_brightness(kbd->backlight_dev, 2);
 		timer_setup(&kbd->inactivity_timer, appletb_inactivity_timer, 0);
 		mod_timer(&kbd->inactivity_timer,
@@ -517,9 +498,6 @@ static int appletb_kbd_probe(struct hid_device *hdev, const struct hid_device_id
 		dev_err_probe(dev, ret, "Failed to set touchbar mode\n");
 		goto unregister_handler;
 	}
-
-	hid_info(hdev, "probe complete default_mode=%u current_mode=%u\n",
-		 appletb_tb_def_mode, kbd->current_mode);
 
 	hid_set_drvdata(hdev, kbd);
 
@@ -548,8 +526,6 @@ static void appletb_kbd_remove(struct hid_device *hdev)
 		send_mode_off = kbd->suspend_preparing_remove &&
 				kbd->current_mode != APPLETB_KBD_MODE_OFF;
 
-	hid_info(hdev, "remove suspend_preparing_remove=%d\n",
-		 kbd ? kbd->suspend_preparing_remove : 0);
 	appletb_kbd_teardown(hdev, kbd, send_mode_off);
 
 	hid_hw_close(hdev);
@@ -560,7 +536,6 @@ static int appletb_kbd_suspend(struct hid_device *hdev, pm_message_t msg)
 {
 	struct appletb_kbd *kbd = hid_get_drvdata(hdev);
 
-	/* Marker only; active reinit happens through fresh probe. */
 	kbd->suspend_preparing_remove = true;
 	return 0;
 }
@@ -569,7 +544,6 @@ static int appletb_kbd_resume(struct hid_device *hdev)
 {
 	struct appletb_kbd *kbd = hid_get_drvdata(hdev);
 
-	/* Clear suspend marker; active reinit happens through fresh probe. */
 	kbd->suspend_preparing_remove = false;
 	return 0;
 }
