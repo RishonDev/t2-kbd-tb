@@ -13,15 +13,31 @@ This fork is part of a set of fixes that make suspend/resume work on T2 Macs. De
 - `apple-bce`: `https://github.com/deqrocks/apple-bce`
 - `t2-upower`: `https://github.com/deqrocks/t2-upower`
 
-## Build
+## Build and install
+
+Before you proceed, make sure that the Linux T2 Headers are installed before continuing.
 
 ```bash
 make
+sudo make install
 ```
 
 ## Deploy
 
+For Fedora-based distributions:
+
 ```bash
-sudo make install
 sudo dracut -f
+```
+
+For Debian-based distributions:
+
+```bash
+sudo update-initramfs -u
+```
+
+For Arch-based distributions:
+
+```bash
+sudo mkinitcpio -P
 ```
